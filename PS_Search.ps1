@@ -1,3 +1,20 @@
+<#
+.SYNOPSIS
+MajorSoft PS Search is a powerful file search tool developed by Patrick Major. It allows users to search for files based on 
+various criteria such as file path, file pattern, text content, date range, and file size. Additionally, it offers the ability 
+to generate a CSV report of the search results. 
+
+.DESCRIPTION
+MajorSoft PS Search is designed to simplify the process of finding files within a specified directory and its subfolders. 
+It supports advanced search options, including the ability to search for files based on their content using regular expressions. 
+The tool also provides options to filter files based on their last modified date and size range. The search results are displayed
+in two tabs: "Results" and "CSV Report", allowing users to easily navigate and analyze the findings.
+
+.AUTHOR
+Author: Patrick Major
+#>
+
+
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName System.Windows.Forms
 
@@ -8,6 +25,7 @@ Add-Type -AssemblyName System.Windows.Forms
         Title="MajorSoft PS Search" Height="650" Width="1000" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -34,6 +52,7 @@ Add-Type -AssemblyName System.Windows.Forms
 
         <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,5">
             <CheckBox x:Name="chkSubfolders" Content="Include Subfolders" Margin="0,0,20,0" IsChecked="True"/>
+            <CheckBox x:Name="chkCountFiles" Content="Count Files (Slower)" Margin="0,0,20,0" IsChecked="True"/>
             <Label Content="Date Range:"/>
             <DatePicker x:Name="dpStartDate" Margin="5,0,5,0"/>
             <Label Content="to"/>
@@ -48,9 +67,9 @@ Add-Type -AssemblyName System.Windows.Forms
         <Button Grid.Row="4" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,10" IsEnabled="False"/>
 
         <ProgressBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" x:Name="progressBar" Height="20" Margin="0,0,0,5"/>
-        <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,5,0,0"/>
+        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,5,0,0"/>
 
-        <TabControl Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,5,0,0">
+        <TabControl Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,5,0,0">
             <TabItem Header="Results">
                 <ListView x:Name="lstResults">
                     <ListView.View>
@@ -85,6 +104,7 @@ $btnBrowse = $window.FindName("btnBrowse")
 $txtPattern = $window.FindName("txtPattern")
 $txtContains = $window.FindName("txtContains")
 $chkSubfolders = $window.FindName("chkSubfolders")
+$chkCountFiles = $window.FindName("chkCountFiles")
 $dpStartDate = $window.FindName("dpStartDate")
 $dpEndDate = $window.FindName("dpEndDate")
 $txtMinSize = $window.FindName("txtMinSize")
@@ -104,6 +124,7 @@ function SaveSettings {
         Pattern = $txtPattern.Text
         Contains = $txtContains.Text
         IncludeSubfolders = $chkSubfolders.IsChecked
+        CountFiles = $chkCountFiles.IsChecked
         StartDate = $dpStartDate.SelectedDate
         EndDate = $dpEndDate.SelectedDate
         MinSize = $txtMinSize.Text
@@ -119,6 +140,7 @@ function LoadSettings {
         $txtPattern.Text = $settings.Pattern
         $txtContains.Text = $settings.Contains
         $chkSubfolders.IsChecked = $settings.IncludeSubfolders
+        $chkCountFiles.IsChecked = $settings.CountFiles
         $dpStartDate.SelectedDate = $settings.StartDate
         $dpEndDate.SelectedDate = $settings.EndDate
         $txtMinSize.Text = $settings.MinSize
@@ -162,6 +184,7 @@ function PerformSearch {
     if ([string]::IsNullOrWhiteSpace($pattern)) { $pattern = "*" }
     $contains = $txtContains.Text
     $includeSubfolders = $chkSubfolders.IsChecked
+    $countFiles = $chkCountFiles.IsChecked
     $startDate = $dpStartDate.SelectedDate
     $endDate = $dpEndDate.SelectedDate
     $minSize = if ($txtMinSize.Text) { [int]$txtMinSize.Text * 1KB } else { $null }
@@ -174,11 +197,20 @@ function PerformSearch {
         File = $true
     }
 
-    $allFiles = @(Get-ChildItem @searchParams)
-    $totalFiles = $allFiles.Count
-    $processedFiles = 0
+    if ($countFiles) {
+        $txtStatus.Text = "Counting files... This may take a while."
+        [System.Windows.Forms.Application]::DoEvents()
+        $allFiles = @(Get-ChildItem @searchParams)
+        $totalFiles = $allFiles.Count
+        $txtStatus.Text = "Searching $totalFiles files..."
+    } else {
+        $allFiles = Get-ChildItem @searchParams
+        $totalFiles = 0
+        $progressBar.Visibility = "Collapsed"
+        $txtStatus.Text = "Searching files..."
+    }
 
-    $txtStatus.Text = "Searching $totalFiles files..."
+    $processedFiles = 0
 
     foreach ($file in $allFiles) {
         if ($script:cancelSearch) {
@@ -233,10 +265,17 @@ function PerformSearch {
             }
         }
 
-        $processedFiles++
-        $progress = [math]::Min(100, ($processedFiles / $totalFiles) * 100)
-        $progressBar.Value = $progress
-        $txtStatus.Text = "Searching... ($processedFiles / $totalFiles)"
+        if ($countFiles) {
+            $processedFiles++
+            $progress = [math]::Min(100, ($processedFiles / $totalFiles) * 100)
+            $progressBar.Value = $progress
+            $txtStatus.Text = "Searching... ($processedFiles / $totalFiles)"
+        } else {
+            $processedFiles++
+            if ($processedFiles % 100 -eq 0) {
+                $txtStatus.Text = "Searching... (Processed $processedFiles files)"
+            }
+        }
         [System.Windows.Forms.Application]::DoEvents()
     }
 
@@ -244,6 +283,7 @@ function PerformSearch {
     $btnSearch.IsEnabled = $true
     $btnCancel.IsEnabled = $false
     $progressBar.Value = 100
+    $progressBar.Visibility = "Visible"
 }
 
 # Cancel search function
@@ -332,7 +372,7 @@ $csvContextMenu.Items.Add($saveCSVMenuItem)
 
 $dgCSVReport.ContextMenu = $csvContextMenu
 
-# Handle Enter key press
+# Handle Enter key press to trigger search
 $window.Add_KeyDown({
     if ($_.Key -eq 'Enter' -and $btnSearch.IsEnabled) {
         $btnSearch.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
