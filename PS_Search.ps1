@@ -51,7 +51,14 @@ Add-Type -AssemblyName System.Windows.Forms
         <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" x:Name="txtStatus" Margin="0,0,0,5"/>
         <Button Grid.Row="6" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,5" Visibility="Collapsed"/>
 
-        <TextBox Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtResults" IsReadOnly="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+        <ListView Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="lstResults" Margin="0,5,0,0">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="File Path" Width="400" DisplayMemberBinding="{Binding FilePath}"/>
+                    <GridViewColumn Header="Matches" Width="300" DisplayMemberBinding="{Binding Matches}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
     </Grid>
 </Window>
 "@
@@ -70,7 +77,7 @@ $dpEndDate = $window.FindName("dpEndDate")
 $txtMinSize = $window.FindName("txtMinSize")
 $txtMaxSize = $window.FindName("txtMaxSize")
 $btnSearch = $window.FindName("btnSearch")
-$txtResults = $window.FindName("txtResults")
+$lstResults = $window.FindName("lstResults")
 $progressBar = $window.FindName("progressBar")
 $txtStatus = $window.FindName("txtStatus")
 $btnCancel = $window.FindName("btnCancel")
@@ -99,7 +106,7 @@ function PerformSearch {
     $btnSearch.IsEnabled = $false
     $btnCancel.Visibility = "Visible"
     $progressBar.Value = 0
-    $txtResults.Text = ""
+    $lstResults.Items.Clear()
     $txtStatus.Text = "Preparing search..."
 
     $path = $txtPath.Text
@@ -111,8 +118,6 @@ function PerformSearch {
     $endDate = $dpEndDate.SelectedDate
     $minSize = if ($txtMinSize.Text) { [int]$txtMinSize.Text * 1KB } else { $null }
     $maxSize = if ($txtMaxSize.Text) { [int]$txtMaxSize.Text * 1KB } else { $null }
-
-    $results = @()
 
     $searchParams = @{
         Path = $path
@@ -141,12 +146,20 @@ function PerformSearch {
         if ($maxSize -and $file.Length -gt $maxSize) { $include = $false }
 
         if ($include -and $contains) {
-            $content = Get-Content $file.FullName -Raw
-            if ($content -notmatch [regex]::Escape($contains)) { $include = $false }
-        }
-
-        if ($include) {
-            $results += "$($file.FullName) ($('{0:N2}' -f ($file.Length / 1KB)) KB, $($file.LastWriteTime))"
+            $matches = @()
+            $lineNumber = 0
+            foreach ($line in Get-Content $file.FullName) {
+                $lineNumber++
+                if ($line -match [regex]::Escape($contains)) {
+                    $matches += "Line $lineNumber"
+                }
+            }
+            if ($matches.Count -gt 0) {
+                $lstResults.Items.Add([PSCustomObject]@{
+                    FilePath = $file.FullName
+                    Matches = $matches -join ", "
+                })
+            }
         }
 
         $processedFiles++
@@ -154,8 +167,7 @@ function PerformSearch {
         $txtStatus.Text = "Searching... ($processedFiles / $totalFiles)"
     }
 
-    $txtResults.Text = $results -join "`r`n"
-    $txtStatus.Text = "Search completed. Found $($results.Count) results."
+    $txtStatus.Text = "Search completed. Found $($lstResults.Items.Count) results."
     $btnSearch.IsEnabled = $true
     $btnCancel.Visibility = "Collapsed"
 }
@@ -165,10 +177,50 @@ function CancelSearch {
     $script:cancelSearch = $true
 }
 
+# Open file function
+function OpenFile($filePath) {
+    Start-Process $filePath
+}
+
+# Navigate to file location function
+function NavigateToFileLocation($filePath) {
+    $folderPath = [System.IO.Path]::GetDirectoryName($filePath)
+    Start-Process "explorer.exe" -ArgumentList "/select,`"$filePath`""
+}
+
 # Attach functions to button click events
 $btnBrowse.Add_Click({ BrowseFolder })
 $btnSearch.Add_Click({ PerformSearch })
 $btnCancel.Add_Click({ CancelSearch })
+
+# Handle double-click on result item
+$lstResults.Add_MouseDoubleClick({
+    $selectedItem = $lstResults.SelectedItem
+    if ($selectedItem) {
+        OpenFile($selectedItem.FilePath)
+    }
+})
+
+# Handle right-click on result item
+$contextMenu = New-Object System.Windows.Controls.ContextMenu
+$menuItem = New-Object System.Windows.Controls.MenuItem
+$menuItem.Header = "Navigate here"
+$menuItem.Add_Click({
+    $selectedItem = $lstResults.SelectedItem
+    if ($selectedItem) {
+        NavigateToFileLocation($selectedItem.FilePath)
+    }
+})
+$contextMenu.Items.Add($menuItem)
+
+$lstResults.ContextMenu = $contextMenu
+
+# Handle Enter key press
+$window.Add_KeyDown({
+    if ($_.Key -eq 'Enter') {
+        PerformSearch
+    }
+})
 
 # Bring window to foreground
 $window.Topmost = $true
