@@ -53,6 +53,7 @@ Add-Type -AssemblyName System.Windows.Forms
         <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,5">
             <CheckBox x:Name="chkSubfolders" Content="Include Subfolders" Margin="0,0,20,0" IsChecked="True"/>
             <CheckBox x:Name="chkCountFiles" Content="Count Files (Slower)" Margin="0,0,20,0" IsChecked="True"/>
+            <CheckBox x:Name="chkRegex" Content="Use Regex" Margin="0,0,20,0"/>
             <Label Content="Date Range:"/>
             <DatePicker x:Name="dpStartDate" Margin="5,0,5,0"/>
             <Label Content="to"/>
@@ -115,6 +116,7 @@ $progressBar = $window.FindName("progressBar")
 $txtStatus = $window.FindName("txtStatus")
 $lstResults = $window.FindName("lstResults")
 $dgCSVReport = $window.FindName("dgCSVReport")
+$chkRegex = $window.FindName("chkRegex")
 
 $settingsFile = Join-Path $env:APPDATA "MajorSoftPSSearch_Settings.json"
 
@@ -125,6 +127,7 @@ function SaveSettings {
         Contains = $txtContains.Text
         IncludeSubfolders = $chkSubfolders.IsChecked
         CountFiles = $chkCountFiles.IsChecked
+        UseRegex = $chkRegex.IsChecked
         StartDate = $dpStartDate.SelectedDate
         EndDate = $dpEndDate.SelectedDate
         MinSize = $txtMinSize.Text
@@ -141,6 +144,7 @@ function LoadSettings {
         $txtContains.Text = $settings.Contains
         $chkSubfolders.IsChecked = $settings.IncludeSubfolders
         $chkCountFiles.IsChecked = $settings.CountFiles
+        $chkRegex.IsChecked = $settings.UseRegex
         $dpStartDate.SelectedDate = $settings.StartDate
         $dpEndDate.SelectedDate = $settings.EndDate
         $txtMinSize.Text = $settings.MinSize
@@ -183,6 +187,7 @@ function PerformSearch {
     $pattern = $txtPattern.Text
     if ([string]::IsNullOrWhiteSpace($pattern)) { $pattern = "*" }
     $contains = $txtContains.Text
+    $useRegex = $chkRegex.IsChecked
     $includeSubfolders = $chkSubfolders.IsChecked
     $countFiles = $chkCountFiles.IsChecked
     $startDate = $dpStartDate.SelectedDate
@@ -231,10 +236,11 @@ function PerformSearch {
             if (![string]::IsNullOrWhiteSpace($contains)) {
                 try {
                     $content = Get-Content $file.FullName -Raw
-                    if ($content -match [regex]::Escape($contains)) {
+                    $pattern = if ($useRegex) { $contains } else { [regex]::Escape($contains) }
+                    if ($content -match $pattern) {
                         $lines = $content -split "`r?`n"
                         for ($i = 0; $i -lt $lines.Count; $i++) {
-                            if ($lines[$i] -match [regex]::Escape($contains)) {
+                            if ($lines[$i] -match $pattern) {
                                 $matchLines += "Line $($i + 1)"
                                 $detections += "Line $($i + 1): $($lines[$i])"
                             }
