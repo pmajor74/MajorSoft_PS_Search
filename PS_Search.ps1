@@ -5,10 +5,9 @@ Add-Type -AssemblyName System.Windows.Forms
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MajorSoft PS Search" Height="650" Width="800" WindowStartupLocation="CenterScreen">
+        Title="MajorSoft PS Search" Height="650" Width="1000" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -49,16 +48,30 @@ Add-Type -AssemblyName System.Windows.Forms
         <Button Grid.Row="4" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,10" IsEnabled="False"/>
 
         <ProgressBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" x:Name="progressBar" Height="20" Margin="0,0,0,5"/>
-        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,0,0,5"/>
+        <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,5,0,0"/>
 
-        <ListView Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="lstResults" Margin="0,5,0,0">
-            <ListView.View>
-                <GridView>
-                    <GridViewColumn Header="File Path" Width="400" DisplayMemberBinding="{Binding FilePath}"/>
-                    <GridViewColumn Header="Matches" Width="300" DisplayMemberBinding="{Binding Matches}"/>
-                </GridView>
-            </ListView.View>
-        </ListView>
+        <TabControl Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,5,0,0">
+            <TabItem Header="Results">
+                <ListView x:Name="lstResults">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="File Path" Width="400" DisplayMemberBinding="{Binding FilePath}"/>
+                            <GridViewColumn Header="Matches" Width="300" DisplayMemberBinding="{Binding Matches}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </TabItem>
+            <TabItem Header="CSV Report">
+                <DataGrid x:Name="dgCSVReport" AutoGenerateColumns="False" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="File Path" Binding="{Binding FilePath}" Width="*"/>
+                        <DataGridTextColumn Header="File Date" Binding="{Binding FileDate}" Width="150"/>
+                        <DataGridTextColumn Header="File Size (KB)" Binding="{Binding FileSize}" Width="100"/>
+                        <DataGridTextColumn Header="Detections" Binding="{Binding Detections}" Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+        </TabControl>
     </Grid>
 </Window>
 "@
@@ -81,6 +94,7 @@ $btnCancel = $window.FindName("btnCancel")
 $progressBar = $window.FindName("progressBar")
 $txtStatus = $window.FindName("txtStatus")
 $lstResults = $window.FindName("lstResults")
+$dgCSVReport = $window.FindName("dgCSVReport")
 
 $settingsFile = Join-Path $env:APPDATA "MajorSoftPSSearch_Settings.json"
 
@@ -112,7 +126,6 @@ function LoadSettings {
     }
 }
 
-
 # Browse function
 function BrowseFolder {
     $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
@@ -133,7 +146,6 @@ function BrowseFolder {
 $script:cancelSearch = $false
 
 function PerformSearch {
-
     # Save current settings
     SaveSettings
 
@@ -142,6 +154,7 @@ function PerformSearch {
     $btnCancel.IsEnabled = $true
     $progressBar.Value = 0
     $lstResults.Items.Clear()
+    $dgCSVReport.Items.Clear()
     $txtStatus.Text = "Preparing search..."
 
     $path = $txtPath.Text
@@ -182,6 +195,7 @@ function PerformSearch {
 
         if ($include) {
             $matchLines = @()
+            $detections = @()
             if (![string]::IsNullOrWhiteSpace($contains)) {
                 try {
                     $content = Get-Content $file.FullName -Raw
@@ -190,6 +204,7 @@ function PerformSearch {
                         for ($i = 0; $i -lt $lines.Count; $i++) {
                             if ($lines[$i] -match [regex]::Escape($contains)) {
                                 $matchLines += "Line $($i + 1)"
+                                $detections += "Line $($i + 1): $($lines[$i])"
                             }
                         }
                     }
@@ -207,6 +222,13 @@ function PerformSearch {
                 $lstResults.Items.Add([PSCustomObject]@{
                     FilePath = $file.FullName
                     Matches = if ($matchLines.Count -gt 0) { $matchLines -join ", " } else { "File match" }
+                })
+
+                $dgCSVReport.Items.Add([PSCustomObject]@{
+                    FilePath = $file.FullName
+                    FileDate = $file.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                    FileSize = [math]::Round($file.Length / 1KB, 2)
+                    Detections = if ($detections.Count -gt 0) { $detections -join "`n" } else { "File match" }
                 })
             }
         }
@@ -254,6 +276,14 @@ $lstResults.Add_MouseDoubleClick({
     }
 })
 
+# Handle double-click on CSV report item
+$dgCSVReport.Add_MouseDoubleClick({
+    $selectedItem = $dgCSVReport.SelectedItem
+    if ($selectedItem) {
+        OpenFile($selectedItem.FilePath)
+    }
+})
+
 # Handle right-click on result item
 $contextMenu = New-Object System.Windows.Controls.ContextMenu
 $menuItem = New-Object System.Windows.Controls.MenuItem
@@ -267,6 +297,20 @@ $menuItem.Add_Click({
 $contextMenu.Items.Add($menuItem)
 
 $lstResults.ContextMenu = $contextMenu
+
+# Handle right-click on CSV report item
+$csvContextMenu = New-Object System.Windows.Controls.ContextMenu
+$csvMenuItem = New-Object System.Windows.Controls.MenuItem
+$csvMenuItem.Header = "Navigate here"
+$csvMenuItem.Add_Click({
+    $selectedItem = $dgCSVReport.SelectedItem
+    if ($selectedItem) {
+        NavigateToFileLocation($selectedItem.FilePath)
+    }
+})
+$csvContextMenu.Items.Add($csvMenuItem)
+
+$dgCSVReport.ContextMenu = $csvContextMenu
 
 # Handle Enter key press
 $window.Add_KeyDown({
