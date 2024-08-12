@@ -34,7 +34,7 @@ Add-Type -AssemblyName System.Windows.Forms
         <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" x:Name="txtContains" Margin="0,0,0,5"/>
 
         <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,5">
-            <CheckBox x:Name="chkSubfolders" Content="Include Subfolders" Margin="0,0,20,0"/>
+            <CheckBox x:Name="chkSubfolders" Content="Include Subfolders" Margin="0,0,20,0" IsChecked="True"/>
             <Label Content="Date Range:"/>
             <DatePicker x:Name="dpStartDate" Margin="5,0,5,0"/>
             <Label Content="to"/>
@@ -77,12 +77,17 @@ $btnCancel = $window.FindName("btnCancel")
 
 # Browse function
 function BrowseFolder {
-    $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-    $folderBrowser.Description = "Select a folder to search"
-    $folderBrowser.RootFolder = [System.Environment+SpecialFolder]::MyComputer
-    
-    if ($folderBrowser.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $txtPath.Text = $folderBrowser.SelectedPath
+    $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $openFileDialog.ValidateNames = $false
+    $openFileDialog.CheckFileExists = $false
+    $openFileDialog.CheckPathExists = $true
+    $openFileDialog.FileName = "Folder Selection"
+    $openFileDialog.Filter = "Folders|no_files"
+    $openFileDialog.Title = "Select a folder"
+
+    if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $selectedPath = [System.IO.Path]::GetDirectoryName($openFileDialog.FileName)
+        $txtPath.Text = $selectedPath
     }
 }
 
