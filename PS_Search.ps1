@@ -82,6 +82,37 @@ $progressBar = $window.FindName("progressBar")
 $txtStatus = $window.FindName("txtStatus")
 $lstResults = $window.FindName("lstResults")
 
+$settingsFile = Join-Path $env:APPDATA "MajorSoftPSSearch_Settings.json"
+
+function SaveSettings {
+    $settings = @{
+        Path = $txtPath.Text
+        Pattern = $txtPattern.Text
+        Contains = $txtContains.Text
+        IncludeSubfolders = $chkSubfolders.IsChecked
+        StartDate = $dpStartDate.SelectedDate
+        EndDate = $dpEndDate.SelectedDate
+        MinSize = $txtMinSize.Text
+        MaxSize = $txtMaxSize.Text
+    }
+    $settings | ConvertTo-Json | Set-Content -Path $settingsFile
+}
+
+function LoadSettings {
+    if (Test-Path $settingsFile) {
+        $settings = Get-Content -Path $settingsFile | ConvertFrom-Json
+        $txtPath.Text = $settings.Path
+        $txtPattern.Text = $settings.Pattern
+        $txtContains.Text = $settings.Contains
+        $chkSubfolders.IsChecked = $settings.IncludeSubfolders
+        $dpStartDate.SelectedDate = $settings.StartDate
+        $dpEndDate.SelectedDate = $settings.EndDate
+        $txtMinSize.Text = $settings.MinSize
+        $txtMaxSize.Text = $settings.MaxSize
+    }
+}
+
+
 # Browse function
 function BrowseFolder {
     $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
@@ -102,6 +133,10 @@ function BrowseFolder {
 $script:cancelSearch = $false
 
 function PerformSearch {
+
+    # Save current settings
+    SaveSettings
+
     $script:cancelSearch = $false
     $btnSearch.IsEnabled = $false
     $btnCancel.IsEnabled = $true
@@ -239,6 +274,12 @@ $window.Add_KeyDown({
         $btnSearch.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
     }
 })
+
+$window.Add_Closing({
+    SaveSettings
+})
+
+LoadSettings
 
 # Bring window to foreground
 $window.Topmost = $true
