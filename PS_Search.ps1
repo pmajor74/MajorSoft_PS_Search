@@ -45,11 +45,11 @@ Add-Type -AssemblyName System.Windows.Forms
             <TextBox x:Name="txtMaxSize" Width="50" Margin="5,0,0,0"/>
         </StackPanel>
 
-        <Button Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Content="Search" x:Name="btnSearch" Margin="0,0,0,10"/>
+        <Button Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Content="Search" x:Name="btnSearch" Margin="0,0,5,10"/>
+        <Button Grid.Row="4" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,10" IsEnabled="False"/>
 
         <ProgressBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" x:Name="progressBar" Height="20" Margin="0,0,0,5"/>
-        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" x:Name="txtStatus" Margin="0,0,0,5"/>
-        <Button Grid.Row="6" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,5" Visibility="Collapsed"/>
+        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,0,0,5"/>
 
         <ListView Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="lstResults" Margin="0,5,0,0">
             <ListView.View>
@@ -77,10 +77,10 @@ $dpEndDate = $window.FindName("dpEndDate")
 $txtMinSize = $window.FindName("txtMinSize")
 $txtMaxSize = $window.FindName("txtMaxSize")
 $btnSearch = $window.FindName("btnSearch")
-$lstResults = $window.FindName("lstResults")
+$btnCancel = $window.FindName("btnCancel")
 $progressBar = $window.FindName("progressBar")
 $txtStatus = $window.FindName("txtStatus")
-$btnCancel = $window.FindName("btnCancel")
+$lstResults = $window.FindName("lstResults")
 
 # Browse function
 function BrowseFolder {
@@ -104,7 +104,7 @@ $script:cancelSearch = $false
 function PerformSearch {
     $script:cancelSearch = $false
     $btnSearch.IsEnabled = $false
-    $btnCancel.Visibility = "Visible"
+    $btnCancel.IsEnabled = $true
     $progressBar.Value = 0
     $lstResults.Items.Clear()
     $txtStatus.Text = "Preparing search..."
@@ -163,18 +163,22 @@ function PerformSearch {
         }
 
         $processedFiles++
-        $progressBar.Value = ($processedFiles / $totalFiles) * 100
+        $progress = [math]::Min(100, ($processedFiles / $totalFiles) * 100)
+        $progressBar.Value = $progress
         $txtStatus.Text = "Searching... ($processedFiles / $totalFiles)"
+        [System.Windows.Forms.Application]::DoEvents()
     }
 
     $txtStatus.Text = "Search completed. Found $($lstResults.Items.Count) results."
     $btnSearch.IsEnabled = $true
-    $btnCancel.Visibility = "Collapsed"
+    $btnCancel.IsEnabled = $false
+    $progressBar.Value = 100
 }
 
 # Cancel search function
 function CancelSearch {
     $script:cancelSearch = $true
+    $btnCancel.IsEnabled = $false
 }
 
 # Open file function
@@ -217,8 +221,8 @@ $lstResults.ContextMenu = $contextMenu
 
 # Handle Enter key press
 $window.Add_KeyDown({
-    if ($_.Key -eq 'Enter') {
-        PerformSearch
+    if ($_.Key -eq 'Enter' -and $btnSearch.IsEnabled) {
+        $btnSearch.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
     }
 })
 
