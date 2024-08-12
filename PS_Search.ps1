@@ -145,19 +145,33 @@ function PerformSearch {
         if ($minSize -and $file.Length -lt $minSize) { $include = $false }
         if ($maxSize -and $file.Length -gt $maxSize) { $include = $false }
 
-        if ($include -and $contains) {
-            $matches = @()
-            $lineNumber = 0
-            foreach ($line in Get-Content $file.FullName) {
-                $lineNumber++
-                if ($line -match [regex]::Escape($contains)) {
-                    $matches += "Line $lineNumber"
+        if ($include) {
+            $matchLines = @()
+            if (![string]::IsNullOrWhiteSpace($contains)) {
+                try {
+                    $content = Get-Content $file.FullName -Raw
+                    if ($content -match [regex]::Escape($contains)) {
+                        $lines = $content -split "`r?`n"
+                        for ($i = 0; $i -lt $lines.Count; $i++) {
+                            if ($lines[$i] -match [regex]::Escape($contains)) {
+                                $matchLines += "Line $($i + 1)"
+                            }
+                        }
+                    }
+                    else {
+                        $include = $false
+                    }
+                }
+                catch {
+                    Write-Host "Error processing file $($file.FullName): $_"
+                    $include = $false
                 }
             }
-            if ($matches.Count -gt 0) {
+
+            if ($include) {
                 $lstResults.Items.Add([PSCustomObject]@{
                     FilePath = $file.FullName
-                    Matches = $matches -join ", "
+                    Matches = if ($matchLines.Count -gt 0) { $matchLines -join ", " } else { "File match" }
                 })
             }
         }
