@@ -10,6 +10,11 @@ It supports advanced search options, including the ability to search for files b
 The tool also provides options to filter files based on their last modified date and size range. The search results are displayed
 in two tabs: "Results" and "CSV Report", allowing users to easily navigate and analyze the findings.
 
+The search tool automatically does a "contains" type search, but you can also use 
+regular expressions such as the following to find phone numbers in files for example:
+\b(\+\d{1,2}\s?)?(\(?\d{3}\)?[\s.-]?)?\d{3}[\s.-]?\d{4}\b 
+
+
 .AUTHOR
 Author: Patrick Major
 #>
