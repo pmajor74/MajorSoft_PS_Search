@@ -66,7 +66,7 @@ Add-Type -AssemblyName System.Windows.Forms
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="File Path" Binding="{Binding FilePath}" Width="*"/>
                         <DataGridTextColumn Header="File Date" Binding="{Binding FileDate}" Width="150"/>
-                        <DataGridTextColumn Header="File Size (KB)" Binding="{Binding FileSize}" Width="100"/>
+                        <DataGridTextColumn Header="File Size (KB)" Binding="{Binding FileSizeKB}" Width="100"/>
                         <DataGridTextColumn Header="Detections" Binding="{Binding Detections}" Width="*"/>
                     </DataGrid.Columns>
                 </DataGrid>
@@ -227,7 +227,7 @@ function PerformSearch {
                 $dgCSVReport.Items.Add([PSCustomObject]@{
                     FilePath = $file.FullName
                     FileDate = $file.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
-                    FileSize = [math]::Round($file.Length / 1KB, 2)
+                    FileSizeKB = [math]::Round($file.Length / 1KB, 2)
                     Detections = if ($detections.Count -gt 0) { $detections -join "`n" } else { "File match" }
                 })
             }
@@ -261,6 +261,20 @@ function OpenFile($filePath) {
 function NavigateToFileLocation($filePath) {
     $folderPath = [System.IO.Path]::GetDirectoryName($filePath)
     Start-Process "explorer.exe" -ArgumentList "/select,`"$filePath`""
+}
+
+# Save CSV Report function
+function SaveCSVReport {
+    $saveFileDialog = New-Object System.Windows.Forms.SaveFileDialog
+    $saveFileDialog.Filter = "CSV Files (*.csv)|*.csv"
+    $saveFileDialog.Title = "Save CSV Report"
+    $saveFileDialog.FileName = "SearchResults_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+
+    if ($saveFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $csvPath = $saveFileDialog.FileName
+        $dgCSVReport.Items | Select-Object FilePath, FileDate, FileSizeKB, Detections | Export-Csv -Path $csvPath -NoTypeInformation
+        [System.Windows.MessageBox]::Show("CSV report saved successfully.", "Save Complete", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+    }
 }
 
 # Attach functions to button click events
@@ -309,6 +323,12 @@ $csvMenuItem.Add_Click({
     }
 })
 $csvContextMenu.Items.Add($csvMenuItem)
+
+# Add "Save CSV Report" menu item
+$saveCSVMenuItem = New-Object System.Windows.Controls.MenuItem
+$saveCSVMenuItem.Header = "Save CSV Report"
+$saveCSVMenuItem.Add_Click({ SaveCSVReport })
+$csvContextMenu.Items.Add($saveCSVMenuItem)
 
 $dgCSVReport.ContextMenu = $csvContextMenu
 
