@@ -19,7 +19,6 @@ regular expressions such as the following to find phone numbers in files for exa
 Author: Patrick Major
 #>
 
-
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName System.Windows.Forms
 
@@ -30,6 +29,7 @@ Add-Type -AssemblyName System.Windows.Forms
         Title="MajorSoft PS Search" Height="650" Width="1000" WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -69,13 +69,18 @@ Add-Type -AssemblyName System.Windows.Forms
             <TextBox x:Name="txtMaxSize" Width="50" Margin="5,0,0,0"/>
         </StackPanel>
 
-        <Button Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Content="Search" x:Name="btnSearch" Margin="0,0,5,10"/>
-        <Button Grid.Row="4" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,10" IsEnabled="False"/>
+        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,5">
+            <Label Content="Threads:"/>
+            <TextBox x:Name="txtThreads" Width="50" Margin="5,0,20,0" Text="1"/>
+        </StackPanel>
 
-        <ProgressBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" x:Name="progressBar" Height="20" Margin="0,0,0,5"/>
-        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,5,0,0"/>
+        <Button Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Content="Search" x:Name="btnSearch" Margin="0,0,5,10"/>
+        <Button Grid.Row="5" Grid.Column="2" Content="Cancel" x:Name="btnCancel" Margin="0,0,0,10" IsEnabled="False"/>
 
-        <TabControl Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,5,0,0">
+        <ProgressBar Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="progressBar" Height="20" Margin="0,0,0,5"/>
+        <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="txtStatus" Margin="0,5,0,5"/>
+
+        <TabControl Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,5,0,0">
             <TabItem Header="Results">
                 <ListView x:Name="lstResults">
                     <ListView.View>
@@ -122,6 +127,7 @@ $txtStatus = $window.FindName("txtStatus")
 $lstResults = $window.FindName("lstResults")
 $dgCSVReport = $window.FindName("dgCSVReport")
 $chkRegex = $window.FindName("chkRegex")
+$txtThreads = $window.FindName("txtThreads")
 
 $settingsFile = Join-Path $env:APPDATA "MajorSoftPSSearch_Settings.json"
 
@@ -137,6 +143,7 @@ function SaveSettings {
         EndDate = $dpEndDate.SelectedDate
         MinSize = $txtMinSize.Text
         MaxSize = $txtMaxSize.Text
+        Threads = $txtThreads.Text
     }
     $settings | ConvertTo-Json | Set-Content -Path $settingsFile
 }
@@ -154,6 +161,7 @@ function LoadSettings {
         $dpEndDate.SelectedDate = $settings.EndDate
         $txtMinSize.Text = $settings.MinSize
         $txtMaxSize.Text = $settings.MaxSize
+        $txtThreads.Text = $settings.Threads
     }
 }
 
@@ -175,6 +183,8 @@ function BrowseFolder {
 
 # Search function
 $script:cancelSearch = $false
+$script:searchResults = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
+$script:csvResults = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
 
 function PerformSearch {
     # Save current settings
@@ -199,6 +209,7 @@ function PerformSearch {
     $endDate = $dpEndDate.SelectedDate
     $minSize = if ($txtMinSize.Text) { [int]$txtMinSize.Text * 1KB } else { $null }
     $maxSize = if ($txtMaxSize.Text) { [int]$txtMaxSize.Text * 1KB } else { $null }
+    $threadCount = [int]::Parse($txtThreads.Text)
 
     $searchParams = @{
         Path = $path
@@ -207,94 +218,142 @@ function PerformSearch {
         File = $true
     }
 
-    if ($countFiles) {
-        $txtStatus.Text = "Counting files... This may take a while."
-        [System.Windows.Forms.Application]::DoEvents()
-        $allFiles = @(Get-ChildItem @searchParams)
-        $totalFiles = $allFiles.Count
-        $txtStatus.Text = "Searching $totalFiles files..."
-    } else {
-        $allFiles = Get-ChildItem @searchParams
-        $totalFiles = 0
-        $progressBar.Visibility = "Collapsed"
-        $txtStatus.Text = "Searching files..."
+    $txtStatus.Text = "Gathering files... This may take a while for large directories."
+    [System.Windows.Forms.Application]::DoEvents()
+
+    $allFiles = @(Get-ChildItem @searchParams)
+    $totalFiles = $allFiles.Count
+
+    if ($totalFiles -eq 0) {
+        $txtStatus.Text = "No files found matching the criteria."
+        $btnSearch.IsEnabled = $true
+        $btnCancel.IsEnabled = $false
+        return
     }
 
-    $processedFiles = 0
+    $txtStatus.Text = "Searching $totalFiles files..."
+    $script:processedFiles = 0
+    $script:searchResults = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
+    $script:csvResults = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
+
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+
+    $throttle = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $threadCount)
+    $throttle.Open()
+
+    $jobs = @()
 
     foreach ($file in $allFiles) {
-        if ($script:cancelSearch) {
-            $txtStatus.Text = "Search cancelled."
-            break
-        }
+        $job = [powershell]::Create().AddScript({
+            param($file, $contains, $useRegex, $startDate, $endDate, $minSize, $maxSize)
 
-        $include = $true
+            $include = $true
 
-        if ($startDate -and $file.LastWriteTime -lt $startDate) { $include = $false }
-        if ($endDate -and $file.LastWriteTime -gt $endDate) { $include = $false }
-        if ($minSize -and $file.Length -lt $minSize) { $include = $false }
-        if ($maxSize -and $file.Length -gt $maxSize) { $include = $false }
+            if ($startDate -and $file.LastWriteTime -lt $startDate) { $include = $false }
+            if ($endDate -and $file.LastWriteTime -gt $endDate) { $include = $false }
+            if ($minSize -and $file.Length -lt $minSize) { $include = $false }
+            if ($maxSize -and $file.Length -gt $maxSize) { $include = $false }
 
-        if ($include) {
-            $matchLines = @()
-            $detections = @()
-            if (![string]::IsNullOrWhiteSpace($contains)) {
-                try {
-                    $content = Get-Content $file.FullName -Raw
-                    $pattern = if ($useRegex) { $contains } else { [regex]::Escape($contains) }
-                    if ($content -match $pattern) {
-                        $lines = $content -split "`r?`n"
-                        for ($i = 0; $i -lt $lines.Count; $i++) {
-                            if ($lines[$i] -match $pattern) {
-                                $matchLines += "Line $($i + 1)"
-                                $detections += "Line $($i + 1): $($lines[$i])"
+            if ($include) {
+                $matchLines = @()
+                $detections = @()
+                if (![string]::IsNullOrWhiteSpace($contains)) {
+                    try {
+                        $content = Get-Content $file.FullName -Raw
+                        $pattern = if ($useRegex) { $contains } else { [regex]::Escape($contains) }
+                        if ($content -match $pattern) {
+                            $lines = $content -split "`r?`n"
+                            for ($i = 0; $i -lt $lines.Count; $i++) {
+                                if ($lines[$i] -match $pattern) {
+                                    $matchLines += "Line $($i + 1)"
+                                    $detections += "Line $($i + 1): $($lines[$i])"
+                                }
                             }
                         }
+                        else {
+                            $include = $false
+                        }
                     }
-                    else {
+                    catch {
+                        Write-Host "Error processing file $($file.FullName): $_"
                         $include = $false
                     }
                 }
-                catch {
-                    Write-Host "Error processing file $($file.FullName): $_"
-                    $include = $false
+
+                if ($include) {
+                    $result = [PSCustomObject]@{
+                        FilePath = $file.FullName
+                        Matches = if ($matchLines.Count -gt 0) { $matchLines -join ", " } else { "File match" }
+                    }
+
+                    $csvResult = [PSCustomObject]@{
+                        FilePath = $file.FullName
+                        FileDate = $file.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                        FileSizeKB = [math]::Round($file.Length / 1KB, 2)
+                        Detections = if ($detections.Count -gt 0) { $detections -join "`n" } else { "File match" }
+                    }
+
+                    return @($result, $csvResult)
                 }
             }
 
-            if ($include) {
-                $lstResults.Items.Add([PSCustomObject]@{
-                    FilePath = $file.FullName
-                    Matches = if ($matchLines.Count -gt 0) { $matchLines -join ", " } else { "File match" }
-                })
+            return $null
+        }).AddArgument($file).AddArgument($contains).AddArgument($useRegex).AddArgument($startDate).AddArgument($endDate).AddArgument($minSize).AddArgument($maxSize)
 
-                $dgCSVReport.Items.Add([PSCustomObject]@{
-                    FilePath = $file.FullName
-                    FileDate = $file.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
-                    FileSizeKB = [math]::Round($file.Length / 1KB, 2)
-                    Detections = if ($detections.Count -gt 0) { $detections -join "`n" } else { "File match" }
-                })
-            }
-        }
-
-        if ($countFiles) {
-            $processedFiles++
-            $progress = [math]::Min(100, ($processedFiles / $totalFiles) * 100)
-            $progressBar.Value = $progress
-            $txtStatus.Text = "Searching... ($processedFiles / $totalFiles)"
-        } else {
-            $processedFiles++
-            if ($processedFiles % 100 -eq 0) {
-                $txtStatus.Text = "Searching... (Processed $processedFiles files)"
-            }
-        }
-        [System.Windows.Forms.Application]::DoEvents()
+        $job.RunspacePool = $throttle
+        $jobs += [PSCustomObject]@{ Pipe = $job; Result = $job.BeginInvoke() }
     }
 
-    $txtStatus.Text = "Search completed. Found $($lstResults.Items.Count) results."
+    $updateTimer = [System.Diagnostics.Stopwatch]::StartNew()
+
+    while ($jobs.Result.IsCompleted -contains $false) {
+        Start-Sleep -Milliseconds 100
+        $script:processedFiles = ($jobs.Result.IsCompleted | Where-Object { $_ -eq $true }).Count
+
+        if ($updateTimer.ElapsedMilliseconds -ge 500) {
+            $progress = [math]::Min(100, ($script:processedFiles / $totalFiles) * 100)
+            $progressBar.Value = $progress
+            $txtStatus.Text = "Searching... ($($script:processedFiles) / $totalFiles)"
+            [System.Windows.Forms.Application]::DoEvents()
+            $updateTimer.Restart()
+        }
+
+        if ($script:cancelSearch) {
+            foreach ($job in $jobs) {
+                if (-not $job.Result.IsCompleted) {
+                    $job.Pipe.Stop()
+                }
+            }
+            break
+        }
+    }
+
+    foreach ($job in $jobs) {
+        $result = $job.Pipe.EndInvoke($job.Result)
+        if ($result) {
+            $script:searchResults.Add($result[0])
+            $script:csvResults.Add($result[1])
+        }
+        $job.Pipe.Dispose()
+    }
+
+    $throttle.Close()
+    $throttle.Dispose()
+
+    $timer.Stop()
+
+    foreach ($result in $script:searchResults) {
+        $lstResults.Items.Add($result)
+    }
+
+    foreach ($result in $script:csvResults) {
+        $dgCSVReport.Items.Add($result)
+    }
+
+    $txtStatus.Text = "Search completed in $($timer.Elapsed.TotalSeconds.ToString("F2")) seconds. Found $($lstResults.Items.Count) results."
     $btnSearch.IsEnabled = $true
     $btnCancel.IsEnabled = $false
     $progressBar.Value = 100
-    $progressBar.Visibility = "Visible"
 }
 
 # Cancel search function
