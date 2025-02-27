@@ -1,0 +1,1 @@
+This is just a powershell file finder with UX and all. Written more for fun than anything. Works pretty good, and in a pinch if you're on a server where you aren't allowed to install new software and windows find in files sucks ;)
